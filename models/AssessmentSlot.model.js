@@ -22,4 +22,8 @@ assessmentSlotSchema.virtual("isFull").get(function () {
   return this.bookedCount >= this.capacity;
 });
 
+// Compound index for the most common query: companyCode + isActive + date + time
+assessmentSlotSchema.index({ companyCode: 1, isActive: 1, date: 1, time: 1 });
+assessmentSlotSchema.index({ companyCode: 1, isActive: 1 });
+
 module.exports = mongoose.model("AssessmentSlot", assessmentSlotSchema);

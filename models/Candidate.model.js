@@ -112,5 +112,6 @@ candidateSchema.index({ jobFamily: 1 });
 candidateSchema.index({ gender: 1 });
 candidateSchema.index({ percentileScore: -1 });
 candidateSchema.index({ "skills.name": 1 });
+candidateSchema.index({ firstName: 1, lastName: 1 }); // compound index for name search
 
 module.exports = mongoose.model("Candidate", candidateSchema);

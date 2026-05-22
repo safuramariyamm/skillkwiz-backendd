@@ -77,12 +77,16 @@ const getCredentials = async (req, res, next) => {
 
     const credentials = await CompanyCredential.find({ company: employer._id }).sort({ createdAt: -1 });
 
-    const enriched = await Promise.all(
-      credentials.map(async (c) => {
-        const slot = (c.status === "booked" || c.status === "assessed")
-          ? await AssessmentSlot.findOne({ bookedBy: c._id }).select("date time center location")
-          : null;
-        return {
+    // Pre-fetch all booked slots in a single query — eliminates N+1
+    const bookedSlots = await AssessmentSlot.find({ bookedBy: { $in: credentials.map(c => c._id) } }).select("date time center location bookedBy");
+    const slotMap = {};
+    bookedSlots.forEach(s => {
+      (s.bookedBy || []).forEach(id => { slotMap[String(id)] = s; });
+    });
+
+    const enriched = credentials.map(c => {
+      const slot = (c.status === "booked" || c.status === "assessed") ? slotMap[String(c._id)] || null : null;
+      return {
           _id: c._id,
           candidateName: c.candidateName,
           candidateEmail: c.candidateEmail,
@@ -92,8 +96,7 @@ const getCredentials = async (req, res, next) => {
           bookedSlot: slot || null,
           createdAt: c.createdAt,
         };
-      })
-    );
+      });
 
     const stats = {
       total: enriched.length,

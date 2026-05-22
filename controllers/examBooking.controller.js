@@ -1,5 +1,6 @@
 const ExamBooking = require("../models/ExamBooking.model");
 const Candidate = require("../models/Candidate.model");
+const mongoose = require("mongoose");
 const { sendExamConfirmationEmail } = require("../utils/email.utils");
 
 // ─── Create Exam Booking ───────────────────────────────────────────────────────
@@ -72,17 +73,20 @@ const getUserBookings = async (req, res, next) => {
       .skip(skip)
       .limit(parseInt(limit));
 
-    // Calculate statistics
-    const totalBookings = await ExamBooking.countDocuments({ user: req.user._id });
-    const upcomingBookings = await ExamBooking.countDocuments({
-      user: req.user._id,
-      status: "scheduled",
-      scheduledDate: { $gte: new Date() }
-    });
-    const completedBookings = await ExamBooking.countDocuments({
-      user: req.user._id,
-      status: "completed"
-    });
+    // Calculate statistics in a single aggregation instead of 3 sequential countDocuments
+    const userId = mongoose.Types.ObjectId(req.user._id);
+    const statsResult = await ExamBooking.aggregate([
+      { $match: { user: userId } },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          upcoming: { $sum: { $cond: [{ $and: [{ $eq: ["$status", "scheduled"] }, { $gte: ["$scheduledDate", new Date()] }] }, 1, 0] } },
+          completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+        }
+      }
+    ]);
+    const { total: totalBookings = 0, upcoming: upcomingBookings = 0, completed: completedBookings = 0 } = statsResult[0] || {};
 
     res.json({
       success: true,
