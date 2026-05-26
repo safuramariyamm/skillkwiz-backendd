@@ -93,6 +93,12 @@ app.use(morgan(process.env.NODE_ENV === "development" ? "dev" : "combined"));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ─── Root + Health ────────────────────────────────────────────────────────────
+
+// TEMPORARY — add this to server.js to debug Railway env vars
+// DELETE after confirming vars are loaded
+
+
+
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
@@ -151,6 +157,17 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`\n🚀 SkillKwiz API running on port ${PORT} in ${process.env.NODE_ENV} mode`);
   console.log(`📋 Health: http://localhost:${PORT}/health\n`);
+});
+
+app.get("/api/debug-paypal", (req, res) => {
+  res.json({
+    PAYPAL_CLIENT_ID: process.env.PAYPAL_CLIENT_ID ? "SET ✅" : "MISSING ❌",
+    PAYPAL_CLIENT_SECRET: process.env.PAYPAL_CLIENT_SECRET ? "SET ✅" : "MISSING ❌",
+    PAYPAL_BASE_URL: process.env.PAYPAL_BASE_URL || "not set",
+    PAYPAL_ENV: process.env.PAYPAL_ENV || "not set",
+    FRONTEND_URL: process.env.FRONTEND_URL || "not set",
+    NODE_ENV: process.env.NODE_ENV,
+  });
 });
 
 process.on("unhandledRejection", (err) => {
