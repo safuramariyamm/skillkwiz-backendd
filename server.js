@@ -21,31 +21,25 @@ const uploadRoutes = require("./routes/upload.routes");
 const contactRoutes = require("./routes/contact.routes");
 const otpRoutes = require("./routes/otp.routes");
 const examBookingRoutes = require("./routes/examBooking.routes");
+const paymentRoutes = require("./routes/payment.routes"); // ← ADD THIS
 
 const app = express();
 
-// Trust Railway's proxy — fixes X-Forwarded-For rate limit warning
-// and ensures correct IP detection behind Railway's load balancer
+// Trust Railway's proxy
 app.set("trust proxy", 1);
 
 connectDB();
 
-// ─── CORS — must come before helmet and all routes ───────────────────────────
+// ─── CORS ─────────────────────────────────────────────────────────────────────
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow no-origin requests (Postman, mobile apps, server-to-server)
     if (!origin) return callback(null, true);
-
     const allowed = [
       "http://localhost:3000",
       "http://localhost:3001",
     ];
-
-    // Add any explicitly configured URLs from env
     if (process.env.CLIENT_URL) allowed.push(process.env.CLIENT_URL);
     if (process.env.CLIENT_URL_PROD) allowed.push(process.env.CLIENT_URL_PROD);
-
-    // Allow ALL vercel.app and railway.app subdomains (covers preview + production)
     if (
       allowed.includes(origin) ||
       /\.vercel\.app$/.test(origin) ||
@@ -54,7 +48,6 @@ const corsOptions = {
     ) {
       return callback(null, true);
     }
-
     console.warn(`[CORS] Blocked: ${origin}`);
     callback(new Error(`CORS: ${origin} not allowed`), false);
   },
@@ -64,7 +57,6 @@ const corsOptions = {
   optionsSuccessStatus: 200,
 };
 
-// Handle ALL preflight requests first
 app.options("*", cors(corsOptions));
 app.use(cors(corsOptions));
 
@@ -87,13 +79,10 @@ const authLimiter = rateLimit({
   max: 1000,
   message: { success: false, message: "Too many auth attempts. Please try again later." },
   skipSuccessfulRequests: true,
-  keyGenerator: (req) => {
-    // Use X-Forwarded-For if behind a proxy, otherwise use IP
-    return req.headers['x-forwarded-for'] || req.ip;
-  },
+  keyGenerator: (req) => req.headers["x-forwarded-for"] || req.ip,
 });
 
-// ─── Body parsers ─────────────────────────────────────────────────────────────
+// ─── Body parsers — MUST come before all routes ───────────────────────────────
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
@@ -130,13 +119,12 @@ app.get("/api", (req, res) => {
     endpoints: [
       "/api/auth", "/api/users", "/api/candidates",
       "/api/employers", "/api/assessments", "/api/otp",
-      "/api/blogs", "/api/contact", "/api/skills",
+      "/api/blogs", "/api/contact", "/api/skills", "/api/payments",
     ],
   });
 });
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
-// Auth limiter disabled for development testing - re-enable in production
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/candidates", candidateRoutes);
@@ -148,6 +136,7 @@ app.use("/api/uploads", uploadRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/otp", otpRoutes);
 app.use("/api/exam-bookings", examBookingRoutes);
+app.use("/api/payments", paymentRoutes); // ← ADD THIS (after body parsers)
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 app.use((req, res) => {

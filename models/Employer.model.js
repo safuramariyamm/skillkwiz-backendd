@@ -85,6 +85,35 @@ const employerSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+
+    // ─── Payment & Credits ────────────────────────────────────────────────────
+    credits: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    activePlan: {
+      type: String,
+      enum: ["free", "starter", "growth", "enterprise", "custom"],
+      default: "free",
+    },
+    subscriptionStatus: {
+      type: String,
+      enum: ["active", "inactive", "expired"],
+      default: "inactive",
+    },
+    subscriptionExpiry: {
+      type: Date,
+      default: null,
+    },
+    totalCreditsPurchased: {
+      type: Number,
+      default: 0,
+    },
+    creditsUsed: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,

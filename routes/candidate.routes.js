@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { protect, authorize } = require("../middleware/auth.middleware");
+const { requireActivePlan } = require("../middleware/requireActivePlan");
 const { uploadResume } = require("../middleware/upload.middleware");
 const { employeeRegisterValidator } = require("../middleware/validate.middleware");
 const {
@@ -11,13 +12,13 @@ const {
   getCandidateById,
 } = require("../controllers/candidate.controller");
 
-// GET /api/candidates - Search candidates (employer/admin only)
+// GET /api/candidates — employer/admin only (plan not required to VIEW)
 router.get("/", protect, authorize("employer", "admin"), getCandidates);
 
-// GET /api/candidates/me - Get my profile (employee only)
+// GET /api/candidates/me — employee
 router.get("/me", protect, authorize("employee"), getMyProfile);
 
-// POST /api/candidates/register - Register candidate profile with resume
+// POST /api/candidates/register — employee registers profile
 router.post(
   "/register",
   protect,
@@ -27,7 +28,7 @@ router.post(
   registerCandidate
 );
 
-// PUT /api/candidates/me - Update my profile
+// PUT /api/candidates/me — employee updates profile
 router.put(
   "/me",
   protect,
@@ -36,7 +37,7 @@ router.put(
   updateMyProfile
 );
 
-// GET /api/candidates/:id - Get candidate by ID (employer/admin)
+// GET /api/candidates/:id — employer/admin (plan not required to VIEW)
 router.get("/:id", protect, authorize("employer", "admin"), getCandidateById);
 
 module.exports = router;
