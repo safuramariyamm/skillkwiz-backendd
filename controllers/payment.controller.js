@@ -80,6 +80,12 @@ const createOrder = async (req, res, next) => {
       idempotencyKey,
     });
 
+    console.log("[PayPal] create-order -> created transaction and order", {
+      employerId: employer._id.toString(),
+      planId,
+      paypalOrderId: order.id,
+    });
+
     res.json({
       success: true,
       data: {
@@ -103,6 +109,8 @@ const captureOrder = async (req, res, next) => {
         .json({ success: false, message: "orderId is required" });
     }
 
+    console.log("[PayPal] capture-order -> incoming", { orderId });
+
     const transaction = await Transaction.findOne({ paypalOrderId: orderId });
     if (!transaction) {
       return res
@@ -119,6 +127,11 @@ const captureOrder = async (req, res, next) => {
     }
 
     const capture = await paypalService.captureOrder(orderId);
+
+    console.log("[PayPal] capture-order -> PayPal response summary", {
+      id: capture?.id,
+      status: capture?.status,
+    });
 
     if (capture.status !== "COMPLETED") {
       await Transaction.findByIdAndUpdate(transaction._id, {
@@ -153,6 +166,12 @@ const captureOrder = async (req, res, next) => {
     const updatedEmployer = await creditService.getBalance(
       transaction.employerId
     );
+
+    console.log("[PayPal] capture-order -> success", {
+      orderId,
+      employerId: transaction.employerId.toString(),
+      creditsAdded: transaction.creditsPurchased,
+    });
 
     res.json({
       success: true,
@@ -340,8 +359,8 @@ const handlePhonePeCallback = async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Invalid callback" });
     }
 
-    // Verify signature
-    const isValid = phonePeService.verifyWebhookChecksum(xVerify, response);
+    // Verify signature (base64 response first, then checksum header)
+    const isValid = phonePeService.verifyChecksum(response, xVerify);
     if (!isValid) {
       console.error("[PhonePe Callback] Invalid checksum");
       return res.status(400).json({ success: false, message: "Invalid checksum" });

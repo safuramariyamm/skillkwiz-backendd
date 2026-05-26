@@ -7,7 +7,7 @@ const PAYPAL_BASE =
     ? "https://api-m.paypal.com"
     : "https://api-m.sandbox.paypal.com");
 
-console.log(`[PayPal] Using base URL: ${PAYPAL_BASE}`);
+console.log(`[PayPal] Using base URL: ${PAYPAL_BASE} (env=${process.env.PAYPAL_ENV || "sandbox"})`);
 
 let cachedToken = null;
 let tokenExpiry = null;
@@ -49,6 +49,12 @@ const getAccessToken = async () => {
 const createOrder = async (amount, credits, planName, idempotencyKey) => {
   const token = await getAccessToken();
   try {
+    console.log("[PayPal] Creating order", {
+      amount,
+      credits,
+      planName,
+      idempotencyKey,
+    });
     const { data } = await axios.post(
       `${PAYPAL_BASE}/v2/checkout/orders`,
       {
@@ -74,6 +80,10 @@ const createOrder = async (amount, credits, planName, idempotencyKey) => {
         },
       }
     );
+    console.log("[PayPal] Created order response", {
+      id: data?.id,
+      status: data?.status,
+    });
     return data;
   } catch (err) {
     const msg = err.response?.data?.message || err.message;
@@ -84,11 +94,17 @@ const createOrder = async (amount, credits, planName, idempotencyKey) => {
 const captureOrder = async (orderId) => {
   const token = await getAccessToken();
   try {
+    console.log("[PayPal] Capturing order", { orderId });
     const { data } = await axios.post(
       `${PAYPAL_BASE}/v2/checkout/orders/${orderId}/capture`,
       {},
       { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
     );
+    console.log("[PayPal] Capture response", {
+      id: data?.id,
+      status: data?.status,
+      raw: data,
+    });
     return data;
   } catch (err) {
     const msg = err.response?.data?.message || err.message;
