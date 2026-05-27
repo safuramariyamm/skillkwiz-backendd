@@ -216,7 +216,7 @@ const initiatePhonePe = async (req, res, next) => {
 
     const result = await phonePeService.initiatePayment({
       merchantTransactionId,
-      amount: plan.amountINR,
+      amount: plan.amountINR * 100, // PhonePe requires amount in paise (1 INR = 100 paise)
       mobileNumber: employer.phone?.replace(/\D/g, "") || "",
       redirectUrl: `${frontendUrl}/employer/payment/phonepe/return?txnId=${merchantTransactionId}`,
       callbackUrl: `${process.env.BACKEND_URL}/api/payments/phonepe/callback`,
