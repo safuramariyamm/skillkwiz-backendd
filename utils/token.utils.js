@@ -46,9 +46,12 @@ const verifyRefreshToken = (token) => {
 };
 
 const sendTokenResponse = (user, statusCode, res, message) => {
-  // Always convert _id to plain string to avoid ObjectId being passed to jwt.sign
-  const accessToken = generateAccessToken(user._id.toString());
-  const refreshToken = generateRefreshToken(user._id.toString());
+  const tokenPayload = {
+    id: user._id.toString(),
+    role: user.role,
+  };
+  const accessToken = generateAccessToken(tokenPayload);
+  const refreshToken = generateRefreshToken(tokenPayload);
 
   res.status(statusCode).json({
     success: true,

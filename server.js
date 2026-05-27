@@ -21,7 +21,8 @@ const uploadRoutes = require("./routes/upload.routes");
 const contactRoutes = require("./routes/contact.routes");
 const otpRoutes = require("./routes/otp.routes");
 const examBookingRoutes = require("./routes/examBooking.routes");
-const paymentRoutes = require("./routes/payment.routes"); // ← ADD THIS
+const paymentRoutes = require("./routes/payment.routes");
+const adminRoutes = require("./routes/admin.routes");
 
 const app = express();
 
@@ -142,7 +143,8 @@ app.use("/api/uploads", uploadRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/otp", otpRoutes);
 app.use("/api/exam-bookings", examBookingRoutes);
-app.use("/api/payments", paymentRoutes); // ← ADD THIS (after body parsers)
+app.use("/api/payments", paymentRoutes);
+app.use("/api/admin", adminRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 app.use((req, res) => {
