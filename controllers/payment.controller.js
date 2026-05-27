@@ -206,9 +206,7 @@ const initiatePhonePe = async (req, res, next) => {
     }
 
     // Generate unique merchant transaction ID (max 38 chars for PhonePe)
-    const merchantTransactionId = `SKQ-${employer._id
-      .toString()
-      .slice(-8)}-${Date.now()}`;
+    const merchantTransactionId = `SKQ-${uuidv4().replace(/-/g, "").slice(0, 28)}`;
 
     const idempotencyKey = `pp-${employer._id}-${planId}-${Date.now()}`;
 
@@ -221,6 +219,13 @@ const initiatePhonePe = async (req, res, next) => {
       redirectUrl: `${frontendUrl}/employer/payment/phonepe/return?txnId=${merchantTransactionId}`,
       callbackUrl: `${process.env.BACKEND_URL}/api/payments/phonepe/callback`,
       userId: employer._id.toString(),
+    });
+
+    // Clean up stale pending PhonePe transactions (prevents 409 on retry)
+    await Transaction.deleteMany({
+      employerId: employer._id,
+      paymentGateway: "phonepe",
+      paymentStatus: "pending",
     });
 
     // Save pending transaction
