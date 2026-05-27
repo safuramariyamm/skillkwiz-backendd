@@ -5,6 +5,7 @@ const {
   getOverview,
   listEmployers,
   listCandidates,
+  listCompanyEmployees,
   getRevenueSummary,
   getRevenueMonthly,
   getHealth,
@@ -15,6 +16,7 @@ router.use(protect, authorize("admin"));
 router.get("/overview", getOverview);
 router.get("/employers", listEmployers);
 router.get("/candidates", listCandidates);
+router.get("/employees", listCompanyEmployees); // FIX: company-registered employees
 router.get("/revenue/summary", getRevenueSummary);
 router.get("/revenue/monthly", getRevenueMonthly);
 router.get("/health", getHealth);

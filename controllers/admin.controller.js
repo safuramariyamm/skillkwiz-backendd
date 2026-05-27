@@ -2,20 +2,28 @@ const User = require("../models/User.model");
 const Employer = require("../models/Employer.model");
 const Candidate = require("../models/Candidate.model");
 const Transaction = require("../models/Transaction.model");
+const CompanyCredential = require("../models/CompanyCredential.model");
 const { AssessmentRequest } = require("../models/Assessment.model");
 
 // GET /api/admin/overview — platform summary for admin dashboard
 const getOverview = async (req, res, next) => {
   try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
     const [
-      totalUsers,
+      totalEmployees,
       totalEmployers,
       totalCandidates,
       totalAssessments,
       revenueAgg,
       activePlans,
+      newEmployersThisMonth,
+      newCandidatesThisMonth,
+      failedPayments,
+      expiredPlans,
     ] = await Promise.all([
-      User.countDocuments(),
+      CompanyCredential.countDocuments(),
       Employer.countDocuments(),
       Candidate.countDocuments(),
       AssessmentRequest.countDocuments(),
@@ -24,17 +32,26 @@ const getOverview = async (req, res, next) => {
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ]),
       Employer.countDocuments({ subscriptionStatus: "active" }),
+      Employer.countDocuments({ createdAt: { $gte: startOfMonth } }),
+      Candidate.countDocuments({ createdAt: { $gte: startOfMonth } }),
+      Transaction.countDocuments({ paymentStatus: "failed" }),
+      Employer.countDocuments({ subscriptionStatus: "expired" }),
     ]);
 
     res.json({
       success: true,
       data: {
-        totalUsers,
+        totalUsers: totalEmployees,   // kept as totalUsers for frontend compat
+        totalEmployees,
         totalEmployers,
         totalCandidates,
         totalAssessments,
         totalRevenue: revenueAgg[0]?.total ?? 0,
         activePlans,
+        newEmployersThisMonth,
+        newCandidatesThisMonth,
+        failedPayments,
+        expiredPlans,
       },
     });
   } catch (err) {
@@ -142,6 +159,60 @@ const listCandidates = async (req, res, next) => {
   }
 };
 
+// GET /api/admin/employees — FIX: list company-registered employees via CompanyCredential
+const listCompanyEmployees = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 20, search = "", skill = "" } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const query = {};
+
+    if (search) {
+      query.$or = [
+        { candidateName: { $regex: search, $options: "i" } },
+        { candidateEmail: { $regex: search, $options: "i" } },
+        { companyCode: { $regex: search, $options: "i" } },
+        { username: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const [credentials, total] = await Promise.all([
+      CompanyCredential.find(query)
+        .populate("company", "company companyCode")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      CompanyCredential.countDocuments(query),
+    ]);
+
+    const rows = credentials.map((c) => ({
+      _id: c._id,
+      name: c.candidateName,
+      email: c.candidateEmail,
+      username: c.username,
+      companyCode: c.companyCode,
+      companyName: c.company?.company || c.companyCode,
+      status: c.status,
+      isUsed: c.isUsed,
+      createdAt: c.createdAt,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        employees: rows,
+        pagination: {
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(total / parseInt(limit)),
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 // GET /api/admin/revenue/summary
 const getRevenueSummary = async (req, res, next) => {
   try {
@@ -215,6 +286,7 @@ module.exports = {
   getOverview,
   listEmployers,
   listCandidates,
+  listCompanyEmployees,
   getRevenueSummary,
   getRevenueMonthly,
   getHealth,
