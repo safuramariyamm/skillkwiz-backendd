@@ -7,7 +7,6 @@ const phonePeService = require("../services/phonepe.service");
 const creditService = require("../services/credit.service");
 
 // ─── Pricing Plans ────────────────────────────────────────────────────────────
-// INR amounts for PhonePe, USD for PayPal
 const PLANS = {
   starter: {
     name: "Starter",
@@ -47,19 +46,24 @@ const createOrder = async (req, res, next) => {
 
     const plan = PLANS[planId];
     if (!plan) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid plan selected" });
+      return res.status(400).json({ success: false, message: "Invalid plan selected" });
     }
 
     const employer = await Employer.findOne({ user: req.user._id });
     if (!employer) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Employer profile not found" });
+      return res.status(404).json({ success: false, message: "Employer profile not found" });
     }
 
-    const idempotencyKey = `${employer._id}-${planId}-${Date.now()}`;
+    // ── Delete any stale pending PayPal transactions for this employer+plan ──
+    // This prevents duplicate idempotencyKey errors when the user retries.
+    await Transaction.deleteMany({
+      employerId: employer._id,
+      paymentGateway: "paypal",
+      paymentStatus: "pending",
+    });
+
+    // Always use a fresh unique key — never reuse across attempts
+    const idempotencyKey = `pp-${employer._id}-${planId}-${uuidv4()}`;
 
     const order = await paypalService.createOrder(
       plan.amountUSD,
@@ -90,7 +94,7 @@ const createOrder = async (req, res, next) => {
       success: true,
       data: {
         orderId: order.id,
-        approveUrl: order.links.find((l) => l.rel === "approve")?.href,
+        approveUrl: order.links?.find((l) => l.rel === "approve")?.href,
       },
     });
   } catch (err) {
@@ -104,20 +108,17 @@ const captureOrder = async (req, res, next) => {
     const { orderId } = req.body;
 
     if (!orderId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "orderId is required" });
+      return res.status(400).json({ success: false, message: "orderId is required" });
     }
 
     console.log("[PayPal] capture-order -> incoming", { orderId });
 
     const transaction = await Transaction.findOne({ paypalOrderId: orderId });
     if (!transaction) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Transaction not found" });
+      return res.status(404).json({ success: false, message: "Transaction not found" });
     }
 
+    // Idempotent — already processed
     if (transaction.paymentStatus === "completed") {
       return res.json({
         success: true,
@@ -134,12 +135,8 @@ const captureOrder = async (req, res, next) => {
     });
 
     if (capture.status !== "COMPLETED") {
-      await Transaction.findByIdAndUpdate(transaction._id, {
-        paymentStatus: "failed",
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "Payment capture failed" });
+      await Transaction.findByIdAndUpdate(transaction._id, { paymentStatus: "failed" });
+      return res.status(400).json({ success: false, message: "Payment capture failed" });
     }
 
     const captureUnit = capture.purchase_units[0].payments.captures[0];
@@ -163,9 +160,7 @@ const captureOrder = async (req, res, next) => {
       activePlan: transaction.planName?.toLowerCase() || "custom",
     });
 
-    const updatedEmployer = await creditService.getBalance(
-      transaction.employerId
-    );
+    const updatedEmployer = await creditService.getBalance(transaction.employerId);
 
     console.log("[PayPal] capture-order -> success", {
       orderId,
@@ -193,42 +188,36 @@ const initiatePhonePe = async (req, res, next) => {
 
     const plan = PLANS[planId];
     if (!plan) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid plan selected" });
+      return res.status(400).json({ success: false, message: "Invalid plan selected" });
     }
 
     const employer = await Employer.findOne({ user: req.user._id });
     if (!employer) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Employer profile not found" });
+      return res.status(404).json({ success: false, message: "Employer profile not found" });
     }
 
-    // Generate unique merchant transaction ID (max 38 chars for PhonePe)
-    const merchantTransactionId = `SKQ-${uuidv4().replace(/-/g, "").slice(0, 28)}`;
-
-    const idempotencyKey = `pp-${employer._id}-${planId}-${Date.now()}`;
-
-    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
-
-    const result = await phonePeService.initiatePayment({
-      merchantTransactionId,
-      amount: plan.amountINR * 100, // PhonePe requires amount in paise (1 INR = 100 paise)
-      mobileNumber: employer.phone?.replace(/\D/g, "") || "",
-      redirectUrl: `${frontendUrl}/employer/payment/phonepe/return?txnId=${merchantTransactionId}`,
-      callbackUrl: `${process.env.BACKEND_URL}/api/payments/phonepe/callback`,
-      userId: employer._id.toString(),
-    });
-
-    // Clean up stale pending PhonePe transactions (prevents 409 on retry)
+    // ── Clean up ALL stale pending PhonePe transactions before creating new ──
     await Transaction.deleteMany({
       employerId: employer._id,
       paymentGateway: "phonepe",
       paymentStatus: "pending",
     });
 
-    // Save pending transaction
+    // Fresh unique IDs every attempt — never reuse
+    const merchantTransactionId = `SKQ-${uuidv4().replace(/-/g, "").slice(0, 28)}`;
+    const idempotencyKey = `pp-${employer._id}-${planId}-${uuidv4()}`;
+
+    const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+
+    const result = await phonePeService.initiatePayment({
+      merchantTransactionId,
+      amount: plan.amountINR * 100, // paise
+      mobileNumber: employer.phone?.replace(/\D/g, "") || "",
+      redirectUrl: `${frontendUrl}/employer/payment/phonepe/return?txnId=${merchantTransactionId}`,
+      callbackUrl: `${process.env.BACKEND_URL}/api/payments/phonepe/callback`,
+      userId: employer._id.toString(),
+    });
+
     await Transaction.create({
       employerId: employer._id,
       amount: plan.amountINR,
@@ -254,27 +243,22 @@ const initiatePhonePe = async (req, res, next) => {
 };
 
 // ─── GET /api/payments/phonepe/verify/:txnId ─────────────────────────────────
-// Called from frontend after redirect return to verify payment status
 const verifyPhonePe = async (req, res, next) => {
   try {
     const { txnId } = req.params;
 
     if (!txnId) {
-      return res
-        .status(400)
-        .json({ success: false, message: "txnId is required" });
+      return res.status(400).json({ success: false, message: "txnId is required" });
     }
 
     const transaction = await Transaction.findOne({
       phonepeMerchantTransactionId: txnId,
     });
     if (!transaction) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Transaction not found" });
+      return res.status(404).json({ success: false, message: "Transaction not found" });
     }
 
-    // Already completed — return early (idempotent)
+    // Already completed — idempotent return
     if (transaction.paymentStatus === "completed") {
       const balance = await creditService.getBalance(transaction.employerId);
       return res.json({
@@ -289,13 +273,9 @@ const verifyPhonePe = async (req, res, next) => {
       });
     }
 
-    // Check with PhonePe API
     const statusResponse = await phonePeService.checkPaymentStatus(txnId);
 
-    if (
-      statusResponse.success &&
-      statusResponse.code === "PAYMENT_SUCCESS"
-    ) {
+    if (statusResponse.success && statusResponse.code === "PAYMENT_SUCCESS") {
       const pgData = statusResponse.data;
 
       await Transaction.findByIdAndUpdate(transaction._id, {
@@ -330,15 +310,11 @@ const verifyPhonePe = async (req, res, next) => {
         },
       });
     } else {
-      // Distinguish terminal failures from still-pending
       const terminalCodes = ["PAYMENT_ERROR", "TIMED_OUT", "PAYMENT_DECLINED"];
       const isFailed = terminalCodes.includes(statusResponse.code);
 
       if (isFailed) {
-        await Transaction.findByIdAndUpdate(transaction._id, {
-          paymentStatus: "failed",
-        });
-        // Return 400 only for confirmed failures
+        await Transaction.findByIdAndUpdate(transaction._id, { paymentStatus: "failed" });
         return res.status(400).json({
           success: false,
           message: statusResponse.message || "Payment failed",
@@ -346,7 +322,7 @@ const verifyPhonePe = async (req, res, next) => {
         });
       }
 
-      // Payment still PENDING — return 202 so frontend knows to keep retrying
+      // Still pending — tell frontend to keep retrying
       return res.status(202).json({
         success: false,
         message: "Payment is still being processed",
@@ -359,7 +335,6 @@ const verifyPhonePe = async (req, res, next) => {
 };
 
 // ─── POST /api/payments/phonepe/callback ─────────────────────────────────────
-// PhonePe server-to-server webhook callback
 const handlePhonePeCallback = async (req, res, next) => {
   try {
     const xVerify = req.headers["x-verify"];
@@ -369,17 +344,13 @@ const handlePhonePeCallback = async (req, res, next) => {
       return res.status(400).json({ success: false, message: "Invalid callback" });
     }
 
-    // Verify signature (base64 response first, then checksum header)
     const isValid = phonePeService.verifyChecksum(response, xVerify);
     if (!isValid) {
       console.error("[PhonePe Callback] Invalid checksum");
       return res.status(400).json({ success: false, message: "Invalid checksum" });
     }
 
-    const decoded = JSON.parse(
-      Buffer.from(response, "base64").toString("utf8")
-    );
-
+    const decoded = JSON.parse(Buffer.from(response, "base64").toString("utf8"));
     const { merchantTransactionId, code, data: pgData } = decoded;
 
     const transaction = await Transaction.findOne({
@@ -388,11 +359,11 @@ const handlePhonePeCallback = async (req, res, next) => {
 
     if (!transaction) {
       console.error("[PhonePe Callback] Transaction not found:", merchantTransactionId);
-      return res.status(200).send("OK"); // Acknowledge to PhonePe
+      return res.status(200).send("OK");
     }
 
     if (transaction.paymentStatus === "completed") {
-      return res.status(200).send("OK"); // Already processed
+      return res.status(200).send("OK");
     }
 
     if (code === "PAYMENT_SUCCESS") {
@@ -415,16 +386,10 @@ const handlePhonePeCallback = async (req, res, next) => {
         activePlan: transaction.planName?.toLowerCase() || "custom",
       });
 
-      console.log(
-        `[PhonePe Callback] ✅ Payment confirmed: ${merchantTransactionId}`
-      );
+      console.log(`[PhonePe Callback] ✅ Payment confirmed: ${merchantTransactionId}`);
     } else {
-      await Transaction.findByIdAndUpdate(transaction._id, {
-        paymentStatus: "failed",
-      });
-      console.log(
-        `[PhonePe Callback] ❌ Payment failed: ${merchantTransactionId} — ${code}`
-      );
+      await Transaction.findByIdAndUpdate(transaction._id, { paymentStatus: "failed" });
+      console.log(`[PhonePe Callback] ❌ Payment failed: ${merchantTransactionId} — ${code}`);
     }
 
     res.status(200).send("OK");
@@ -437,27 +402,19 @@ const handlePhonePeCallback = async (req, res, next) => {
 // ─── POST /api/payments/webhook (PayPal) ─────────────────────────────────────
 const handleWebhook = async (req, res, next) => {
   try {
-    const isValid = await paypalService.verifyWebhookSignature(
-      req.headers,
-      req.rawBody
-    );
+    const isValid = await paypalService.verifyWebhookSignature(req.headers, req.rawBody);
     if (!isValid) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid webhook signature" });
+      return res.status(400).json({ success: false, message: "Invalid webhook signature" });
     }
 
     const event = req.body;
 
     if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
-      const orderId =
-        event.resource.supplementary_data?.related_ids?.order_id;
+      const orderId = event.resource.supplementary_data?.related_ids?.order_id;
       if (orderId) {
         const txn = await Transaction.findOne({ paypalOrderId: orderId });
         if (txn && txn.paymentStatus !== "completed") {
-          await Transaction.findByIdAndUpdate(txn._id, {
-            paymentStatus: "completed",
-          });
+          await Transaction.findByIdAndUpdate(txn._id, { paymentStatus: "completed" });
           await creditService.addCredits(
             txn.employerId,
             txn.creditsPurchased,
@@ -482,44 +439,26 @@ const handleWebhook = async (req, res, next) => {
 const getHistory = async (req, res, next) => {
   try {
     const employer = await Employer.findOne({ user: req.user._id });
-    if (!employer)
-      return res
-        .status(404)
-        .json({ success: false, message: "Employer not found" });
+    if (!employer) {
+      return res.status(404).json({ success: false, message: "Employer not found" });
+    }
 
     const { page = 1, limit = 10 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [transactions, total, ledger, balance] = await Promise.all([
-      Transaction.find({
-        employerId: employer._id,
-        paymentStatus: "completed",
-      })
+      Transaction.find({ employerId: employer._id, paymentStatus: "completed" })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
-      Transaction.countDocuments({
-        employerId: employer._id,
-        paymentStatus: "completed",
-      }),
-      CreditLedger.find({ employerId: employer._id })
-        .sort({ createdAt: -1 })
-        .limit(20),
+      Transaction.countDocuments({ employerId: employer._id, paymentStatus: "completed" }),
+      CreditLedger.find({ employerId: employer._id }).sort({ createdAt: -1 }).limit(20),
       creditService.getBalance(employer._id),
     ]);
 
     res.json({
       success: true,
-      data: {
-        transactions,
-        ledger,
-        balance,
-        pagination: {
-          total,
-          page: parseInt(page),
-          limit: parseInt(limit),
-        },
-      },
+      data: { transactions, ledger, balance, pagination: { total, page: parseInt(page), limit: parseInt(limit) } },
     });
   } catch (err) {
     next(err);
@@ -530,10 +469,9 @@ const getHistory = async (req, res, next) => {
 const getBalance = async (req, res, next) => {
   try {
     const employer = await Employer.findOne({ user: req.user._id });
-    if (!employer)
-      return res
-        .status(404)
-        .json({ success: false, message: "Employer not found" });
+    if (!employer) {
+      return res.status(404).json({ success: false, message: "Employer not found" });
+    }
     const balance = await creditService.getBalance(employer._id);
     res.json({ success: true, data: balance });
   } catch (err) {
