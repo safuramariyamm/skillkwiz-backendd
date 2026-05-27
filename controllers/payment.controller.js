@@ -330,22 +330,27 @@ const verifyPhonePe = async (req, res, next) => {
         },
       });
     } else {
-      // Payment failed or pending
-      const isFailed =
-        statusResponse.code === "PAYMENT_ERROR" ||
-        statusResponse.code === "TIMED_OUT" ||
-        statusResponse.code === "PAYMENT_DECLINED";
+      // Distinguish terminal failures from still-pending
+      const terminalCodes = ["PAYMENT_ERROR", "TIMED_OUT", "PAYMENT_DECLINED"];
+      const isFailed = terminalCodes.includes(statusResponse.code);
 
       if (isFailed) {
         await Transaction.findByIdAndUpdate(transaction._id, {
           paymentStatus: "failed",
         });
+        // Return 400 only for confirmed failures
+        return res.status(400).json({
+          success: false,
+          message: statusResponse.message || "Payment failed",
+          code: statusResponse.code,
+        });
       }
 
-      return res.status(400).json({
+      // Payment still PENDING — return 202 so frontend knows to keep retrying
+      return res.status(202).json({
         success: false,
-        message: statusResponse.message || "Payment not completed",
-        code: statusResponse.code,
+        message: "Payment is still being processed",
+        code: statusResponse.code || "PAYMENT_PENDING",
       });
     }
   } catch (err) {
